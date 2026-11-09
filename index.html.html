@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ASYL MURA — Каталог и импорт Kaspi</title>
+<style>
+*{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f5f6f8;margin:0;color:#222}header{background:#18392b;color:white;padding:25px;text-align:center}main{max-width:950px;margin:25px auto;padding:15px}input,select{padding:11px;border:1px solid #ccc;border-radius:8px;font-size:15px;max-width:100%}#search{width:100%}button{background:#18392b;color:#fff;border:0;border-radius:8px;padding:12px 16px;margin:8px 5px 8px 0;cursor:pointer}button:disabled{opacity:.5;cursor:default}.card,.panel{background:#fff;padding:20px;margin-top:15px;border-radius:12px;box-shadow:0 2px 8px #00000010}.card h3{margin-top:0}.card a{color:#18392b}.status{display:block;margin-top:12px}.number{font-weight:bold}.muted{color:#666;font-size:14px}.row{border-top:1px solid #ddd;padding:12px 0}.row label{display:block;margin:7px 0}.row select{width:100%}.danger{color:#a02020}#preview{max-height:450px;overflow:auto}
+ .calc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.calc-grid label{display:flex;flex-direction:column;gap:5px;font-size:14px}.calc-grid input{width:100%}.result{font-size:18px;font-weight:bold;margin-top:16px}.calc-note{font-size:13px;color:#666}.calc-box{border-top:1px solid #ddd;margin-top:14px;padding-top:14px} .positive{color:#17623b}.negative{color:#a02020}
+</style></head><body><header><h1>ASYL MURA</h1><p>Система управления товарами</p></header><main>
+<section class="panel"><h2>Импорт из Kaspi</h2><p>Загрузи скачанный из кабинета Kaspi файл Excel. Сначала проверь соответствия, затем подтверди изменения.</p>
+<input type="file" id="excel" accept=".xlsx,.xls"><button id="readBtn" onclick="readExcel()">Проверить прайс-лист</button>
+<p class="muted">Для чтения Excel при первом запуске нужен интернет. Файл обрабатывается в твоём браузере.</p><div id="importMessage"></div><div id="preview"></div><button id="applyBtn" onclick="applyImport()" style="display:none">Подтвердить выбранные изменения</button></section>
+<section class="panel"><h2>Быстрый калькулятор прибыли</h2><div id="quickCalc"></div></section><section class="panel"><h2>Каталог товаров</h2><input id="search" placeholder="Поиск по названию, номеру или SKU" oninput="showProducts()"><br><button onclick="addProduct()">+ Добавить товар</button><div id="products"></div></section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+const STORAGE_KEY="products";
+let products;
+try{const v=JSON.parse(localStorage.getItem(STORAGE_KEY)||"[]");products=Array.isArray(v)?v:[]}catch(e){products=[];alert("Не удалось прочитать каталог. Данные в браузере не изменены.")}
+let proposals=[];
+function saveProducts(){localStorage.setItem(STORAGE_KEY,JSON.stringify(products))}
+function el(tag,content){const x=document.createElement(tag);if(content!==undefined)x.textContent=content;return x}
+function showProducts(){
+ const box=document.getElementById("products"),q=document.getElementById("search").value.toLowerCase().trim();box.replaceChildren();
+ products.filter(p=>String(p.name||"").toLowerCase().includes(q)||String(p.number).includes(q)||String(p.kaspiSku||"").toLowerCase().includes(q)).forEach(p=>{
+ const card=el("div");card.className="card";const title=el("h3",p.name),num=el("p","Номер товара: "+p.number);num.className="number";
+ const statusLabel=el("label","Статус товара: ");statusLabel.className="status";const status=el("select");
+ ["В пути","В наличии","Архив"].forEach(v=>{const o=el("option",v);o.value=v;status.append(o)});status.value=p.status||"В пути";status.onchange=()=>{p.status=status.value;saveProducts()};statusLabel.append(status);
+ const sku=el("p","SKU Kaspi: "+(p.kaspiSku||"не привязан"));const price=el("p","Цена Kaspi: "+(Number.isFinite(Number(p.kaspiPrice))&&p.kaspiPrice!==undefined?Number(p.kaspiPrice).toLocaleString("ru-RU")+" ₸":"не указана"));
+ const link=el("p");if(p.kaspiLink){const a=el("a","Открыть товар в Kaspi");a.href=p.kaspiLink;a.target="_blank";a.rel="noopener noreferrer";link.append(a)}
+ const edit=el("button","Редактировать");edit.onclick=()=>editProduct(p.number);const calcBtn=el("button","Рассчитать прибыль");const calcHolder=el("div");calcHolder.style.display="none";calcBtn.onclick=()=>{calcHolder.style.display=calcHolder.style.display==="none"?"block":"none";if(calcHolder.style.display==="block")renderCalculator(calcHolder,p)};card.append(title,num,statusLabel,sku,price,link,edit,calcBtn,calcHolder);box.append(card);
+ });
+}
+function addProduct(){
+ const name=prompt("Название товара:");if(!name||!name.trim())return;const link=prompt("Ссылка на Kaspi (можно оставить пустой):");if(link===null)return;
+ const number=products.reduce((m,p)=>Math.max(m,Number(p.number)||0),0)+1;
+ products.push({number,name:name.trim(),status:"В пути",kaspiLink:link.trim()});saveProducts();showProducts();
+}
+function editProduct(number){
+ const p=products.find(x=>x.number===number);if(!p)return;
+ const n=prompt("Введите номер товара:",p.number);if(n===null)return;const parsed=Number(n);
+ if(!Number.isSafeInteger(parsed)||parsed<=0){alert("Введите целый положительный номер!");return}
+ if(products.some(x=>x!==p&&Number(x.number)===parsed)){alert("Этот номер уже занят!");return}
+ const name=prompt("Название товара:",p.name);if(name===null)return;if(!name.trim()){alert("Название не может быть пустым!");return}
+ const link=prompt("Ссылка на Kaspi:",p.kaspiLink||"");if(link===null)return;
+ const sku=prompt("SKU Kaspi (можно оставить пустым):",p.kaspiSku||"");if(sku===null)return;
+ if(sku.trim()&&products.some(x=>x!==p&&String(x.kaspiSku||"")===sku.trim())){alert("Этот SKU уже привязан к другому товару!");return}
+ p.number=parsed;p.name=name.trim();p.kaspiLink=link.trim();p.kaspiSku=sku.trim();saveProducts();showProducts();alert("Изменения сохранены!");
+}
+
+const CALC_FIELDS=[
+ ["purchase","Закупочная цена, ₸",0],["chinaShipping","Доставка из Китая, ₸",0],
+ ["commission","Комиссия Kaspi, %",10],["tax","Налог, %",3],
+ ["packaging","Упаковка, ₸",0],["customerShipping","Доставка покупателю, ₸",0],
+ ["other","Другие расходы, ₸",0]
+];
+function renderCalculator(target,p){
+ target.replaceChildren();const wrap=el("div");wrap.className="calc-box";
+ const title=el("h3",p?"Калькулятор товара №"+p.number:"Быстрый расчёт");wrap.append(title);
+ const grid=el("div");grid.className="calc-grid";const inputs={};
+ const makeInput=(key,label,value)=>{
+   const l=el("label",label),i=el("input");i.type="number";i.min="0";i.step="any";i.value=String(value??0);l.append(i);grid.append(l);inputs[key]=i;return i;
+ };
+ makeInput("sale","Цена продажи, ₸",p?(p.kaspiPrice??0):0);
+ const saved=p?.profitCalc||{};
+ CALC_FIELDS.forEach(([key,label,def])=>makeInput(key,label,saved[key]??def));
+ wrap.append(grid);
+ const result=el("div");result.className="result";const details=el("p");details.className="calc-note";
+ const note=el("p","Маржа = чистая прибыль / цена продажи × 100%. Расчёт ориентировочный: укажи реальные тарифы и расходы.");note.className="calc-note";
+ wrap.append(result,details,note);
+ function recalc(){
+  const n=k=>Number(inputs[k].value);
+  const sale=n("sale"),purchase=n("purchase"),china=n("chinaShipping"),commission=n("commission"),tax=n("tax"),packaging=n("packaging"),customer=n("customerShipping"),other=n("other");
+  const valid=Object.values(inputs).every(i=>i.value.trim()!==""&&Number.isFinite(Number(i.value))&&Number(i.value)>=0)&&commission<=100&&tax<=100;
+  if(!valid){result.textContent="Заполни поля неотрицательными числами (проценты — до 100).";details.textContent="";return}
+  const fee=sale*commission/100,levy=sale*tax/100,expenses=purchase+china+fee+levy+packaging+customer+other,profit=sale-expenses;
+  result.textContent="Чистая прибыль: "+money(profit)+" | Маржа: "+(sale>0?(profit/sale*100).toFixed(1)+"%":"—");
+  result.className="result "+(profit>=0?"positive":"negative");
+  details.textContent="Всего расходов: "+money(expenses)+"; комиссия: "+money(fee)+"; налог: "+money(levy)+".";
+  if(p){const values={};CALC_FIELDS.forEach(([k])=>values[k]=n(k));p.profitCalc=values;try{saveProducts()}catch(e){details.textContent+=" Не удалось сохранить: "+e.message}}
+ }
+ Object.values(inputs).forEach(i=>i.addEventListener("input",recalc));
+ if(p){inputs.sale.readOnly=true;inputs.sale.title="Цена берётся из прайс-листа Kaspi";if(p.kaspiPrice===undefined){inputs.sale.readOnly=false;note.textContent="Цена Kaspi пока не указана: введи её для расчёта. После импорта Excel цена подтянется автоматически. "+note.textContent}}
+ recalc();target.append(wrap);
+}
+function money(v){return v.toLocaleString("ru-RU",{maximumFractionDigits:2})+" ₸"}
+
+function norm(s){return String(s||"").toLowerCase().replace(/ё/g,"е").replace(/[^a-zа-я0-9]+/g," ").trim()}
+function bestMatch(name){
+ const key=norm(name);if(!key)return null;
+ const exact=products.filter(p=>norm(p.name)===key&&!p.kaspiSku);return exact.length===1?exact[0]:null;
+}
+async function readExcel(){
+ const input=document.getElementById("excel"),msg=document.getElementById("importMessage"),preview=document.getElementById("preview");
+ proposals=[];preview.replaceChildren();document.getElementById("applyBtn").style.display="none";
+ if(!input.files.length){msg.textContent="Сначала выбери файл Excel.";return}
+ if(typeof XLSX==="undefined"){msg.textContent="Не загрузилась библиотека Excel. Проверь подключение к интернету и обнови страницу.";return}
+ try{
+ const data=await input.files[0].arrayBuffer(),book=XLSX.read(data,{type:"array"}),sheet=book.Sheets[book.SheetNames[0]];
+ const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:true});
+ if(!rows.length||!["SKU","model","price"].every(k=>Object.prototype.hasOwnProperty.call(rows[0],k)))throw Error("В первом листе нужны столбцы SKU, model и price.");
+ const seen=new Set();let invalid=0;
+ for(const r of rows){
+ const sku=String(r.SKU||"").trim(),name=String(r.model||"").trim(),price=Number(r.price);
+ if(!sku||!name||!Number.isFinite(price)||price<0||seen.has(sku)){invalid++;continue}seen.add(sku);
+ const linked=products.filter(p=>String(p.kaspiSku||"")===sku);
+ const match=linked.length===1?linked[0]:linked.length===0?bestMatch(name):null;
+ proposals.push({sku,name,price,linked:linked.length===1,matchNumber:match?match.number:null});
+ }
+ msg.textContent="Найдено "+proposals.length+" строк с товарами. Пропущено пустых/некорректных/повторных строк: "+invalid+". Ничего пока не изменено.";
+ proposals.forEach((r,i)=>{
+ const div=el("div");div.className="row";const h=el("strong",r.name+" — "+r.price.toLocaleString("ru-RU")+" ₸");div.append(h,el("p","SKU: "+r.sku));
+ const label=el("label","Действие: ");const select=el("select");select.dataset.index=i;
+ const options=[];
+ if(r.linked){options.push(["linked","Обновить цену привязанного товара"])}
+ else{
+ options.push(["skip","Пропустить"]);
+ if(r.matchNumber!==null)options.push(["match:"+r.matchNumber,"Связать с №"+r.matchNumber+" (точное название)"]);
+ products.filter(p=>!p.kaspiSku&&p.number!==r.matchNumber).forEach(p=>options.push(["match:"+p.number,"Связать с №"+p.number+" — "+p.name]));
+ options.push(["new","Создать новый товар"]);
+ }
+ options.forEach(([value,text])=>{const o=el("option",text);o.value=value;select.append(o)});
+ if(!r.linked&&r.matchNumber!==null)select.value="match:"+r.matchNumber;
+ label.append(select);div.append(label);preview.append(div);
+ });
+ document.getElementById("applyBtn").style.display=proposals.length?"inline-block":"none";
+ }catch(e){msg.textContent="Ошибка чтения: "+e.message}
+}
+function applyImport(){
+ const choices=[...document.querySelectorAll("#preview select")].map(s=>s.value);
+ const reserved=new Set();const operations=[];let newCount=0;
+ for(let i=0;i<proposals.length;i++){
+ const r=proposals[i],choice=choices[i];if(choice==="skip")continue;
+ if(choice==="linked"){const p=products.find(p=>p.kaspiSku===r.sku);if(!p){alert("Привязанный товар не найден. Импорт остановлен.");return}operations.push({p,r});continue}
+ if(choice.startsWith("match:")){
+ const n=Number(choice.slice(6)),p=products.find(p=>Number(p.number)===n);
+ if(!p||p.kaspiSku||reserved.has(n)){alert("Один товар нельзя связать с несколькими SKU. Проверь выбор.");return}
+ reserved.add(n);operations.push({p,r});continue
+ }
+ if(choice==="new"){operations.push({p:null,r});newCount++}
+ }
+ if(!operations.length){alert("Изменения не выбраны.");return}
+ if(!confirm("Применить "+operations.length+" изменений, включая "+newCount+" новых товаров?"))return;
+ const snapshot=JSON.stringify(products);
+ try{
+ let next=products.reduce((m,p)=>Math.max(m,Number(p.number)||0),0)+1;
+ for(const {p,r} of operations){
+ if(p){if(p.kaspiPrice!==undefined&&Number(p.kaspiPrice)!==r.price){p.priceHistory=p.priceHistory||[];p.priceHistory.push({price:Number(p.kaspiPrice),date:new Date().toISOString()})}
+ p.kaspiSku=r.sku;p.kaspiPrice=r.price;if(p.initialKaspiPrice===undefined)p.initialKaspiPrice=r.price;
+ }else{products.push({number:next++,name:r.name,status:"В наличии",kaspiLink:"",kaspiSku:r.sku,kaspiPrice:r.price,initialKaspiPrice:r.price,priceHistory:[]})}
+ }
+ saveProducts();showProducts();document.getElementById("importMessage").textContent="Готово: применено "+operations.length+" изменений.";document.getElementById("preview").replaceChildren();document.getElementById("applyBtn").style.display="none";proposals=[];
+ }catch(e){products=JSON.parse(snapshot);alert("Не удалось сохранить изменения: "+e.message)}
+}
+showProducts();
+renderCalculator(document.getElementById("quickCalc"),null);
+</script></body></html>
